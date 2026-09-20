@@ -61,7 +61,8 @@ func WithLocale(locale string) Option {
 	}
 }
 
-// WithProxy sets a SOCKS5 proxy address (host:port or socks5://host:port).
+// WithProxy sets a SOCKS5 proxy. Accepts host:port, socks5://host:port,
+// user:pass@host:port, or socks5://user:pass@host:port (RFC 1929).
 func WithProxy(addr string) Option {
 	return func(c *Client) {
 		c.proxy = addr

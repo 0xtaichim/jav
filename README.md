@@ -54,11 +54,17 @@ go build -o javcli .
 | `JAVDB_BASE_URL` | 覆盖站点根 URL，默认 `https://javdb.com` |
 | `JAVDB_TLS_INSECURE` | 设为 `1` / `true` / `yes` / `on` 时跳过 TLS 校验 |
 
-未提供 Cookie 时，客户端仍会带上 `over18=1` 与 `locale`。收藏的读写、以及部分无码 / FC2 内容需要浏览器登录后的会话 Cookie。代理地址可为 `host:port` 或 `socks5://host:port`。
+未提供 Cookie 时，客户端仍会带上 `over18=1` 与 `locale`。收藏的读写、以及部分无码 / FC2 内容需要浏览器登录后的会话 Cookie。SOCKS5 代理支持无认证与用户名/密码认证：
+
+- `127.0.0.1:6153` 或 `socks5://127.0.0.1:6153`
+- `socks5://user:pass@127.0.0.1:6153` 或 `user:pass@127.0.0.1:6153`
+
+密码含 `@`、`:`、`/` 等字符时请做 URL 编码，例如 `socks5://user:p%40ss@127.0.0.1:6153`。
 
 ```bash
 # 写入配置文件
 javcli config set proxy "127.0.0.1:6153"
+javcli config set proxy "socks5://user:pass@127.0.0.1:6153"
 javcli config set cookies "<从浏览器复制的 Cookie 字符串>"
 javcli config set locale zh
 
@@ -76,6 +82,7 @@ javcli config unset cookies
 
 ```bash
 javcli --proxy 127.0.0.1:6153 search "SSNI-678"
+javcli --proxy socks5://user:pass@127.0.0.1:6153 search "SSNI-678"
 ```
 
 ### search

@@ -4,6 +4,7 @@
 
 # 设置代理和 Cookie（请替换为你自己的值）
 export SOCKS5_PROXY="127.0.0.1:6153"
+# export SOCKS5_PROXY="socks5://user:pass@127.0.0.1:6153"
 # export JAVDB_COOKIES="your_javdb_cookies_here"
 
 echo "=== 搜索功能 ==="

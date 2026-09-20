@@ -39,10 +39,11 @@ go build -o javcli .
 
 仅环境变量：`JAVDB_BASE_URL`（默认 `https://javdb.com`）；`JAVDB_TLS_INSECURE=1` 跳过 TLS 校验。
 
-未设 Cookie 时仍带 `over18=1`。**收藏读写、部分无码/FC2 内容需要有效登录 Cookie。** 代理写成 `host:port` 或 `socks5://host:port`。设置配置：
+未设 Cookie 时仍带 `over18=1`。**收藏读写、部分无码/FC2 内容需要有效登录 Cookie。** SOCKS5 代理写成 `host:port`、`socks5://host:port`，或带认证的 `socks5://user:pass@host:port`（密码中的 `@`、`:` 等请 URL 编码）。设置配置：
 
 ```bash
 javcli config set proxy "127.0.0.1:6153"
+javcli config set proxy "socks5://user:pass@127.0.0.1:6153"
 javcli config set cookies "<cookie>"
 javcli config list
 javcli config path
