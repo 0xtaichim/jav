@@ -105,11 +105,21 @@ func (c *Client) parseDetailPanel(doc *goquery.Document, detail *MovieDetail, fa
 }
 
 func (c *Client) parseMagnetLinks(doc *goquery.Document, detail *MovieDetail) {
-	doc.Find(".magnet-links .item.columns.is-desktop").Each(func(_ int, s *goquery.Selection) {
+	// JavDB markup evolved: magnets live under #magnets-content.magnet-links > .item
+	// (older pages used .item.columns.is-desktop). Overlapping selectors are
+	// expected; magnet URLs are de-duplicated below.
+	sel := doc.Find("#magnets-content.magnet-links .item, .magnet-links .item.columns.is-desktop, .magnet-links .item")
+	seen := map[string]bool{}
+	sel.Each(func(_ int, s *goquery.Selection) {
 		magnet := MagnetLink{}
 		magnetNameBlock := s.Find(".magnet-name")
 		if magnetLink, exists := magnetNameBlock.Find("a[href^='magnet:']").Attr("href"); exists {
 			magnet.Magnet = magnetLink
+		}
+		if magnet.Magnet == "" {
+			if clip, exists := s.Find("button.copy-to-clipboard").Attr("data-clipboard-text"); exists && strings.HasPrefix(clip, "magnet:") {
+				magnet.Magnet = clip
+			}
 		}
 		magnet.Name = strings.TrimSpace(magnetNameBlock.Find("span.name").Text())
 		magnet.Size = strings.TrimSpace(magnetNameBlock.Find("span.meta").Text())
@@ -123,8 +133,13 @@ func (c *Client) parseMagnetLinks(doc *goquery.Document, detail *MovieDetail) {
 			}
 		})
 		magnet.Date = strings.TrimSpace(s.Find(".date .time").Text())
-		if magnet.Magnet != "" {
-			detail.Magnets = append(detail.Magnets, magnet)
+		if magnet.Magnet == "" {
+			return
 		}
+		if seen[magnet.Magnet] {
+			return
+		}
+		seen[magnet.Magnet] = true
+		detail.Magnets = append(detail.Magnets, magnet)
 	})
 }
