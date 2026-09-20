@@ -112,6 +112,107 @@ func TestParsePageFromQuery(t *testing.T) {
 	}
 }
 
+func parseMagnetsFromHTML(t *testing.T, html string) []MagnetLink {
+	t.Helper()
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail := &MovieDetail{Magnets: []MagnetLink{}}
+	(&Client{}).parseMagnetLinks(doc, detail)
+	return detail.Magnets
+}
+
+func TestParseMagnetLinksCurrentMarkup(t *testing.T) {
+	t.Parallel()
+	html := `
+<div id="magnets-content" class="magnet-links">
+  <div class="item">
+    <div class="magnet-name">
+      <a href="magnet:?xt=urn:btih:aaa111">link</a>
+      <span class="name">SSNI-678-C.mp4</span>
+      <span class="meta">2.1GB</span>
+      <div class="tags"><span class="tag">高清</span><span class="tag">字幕</span></div>
+    </div>
+    <div class="date"><span class="time">2024-05-06</span></div>
+  </div>
+  <div class="item">
+    <div class="magnet-name">
+      <a href="magnet:?xt=urn:btih:bbb222">link</a>
+      <span class="name">SSNI-678.mp4</span>
+      <span class="meta">1.8GB</span>
+    </div>
+    <div class="date"><span class="time">2024-05-07</span></div>
+  </div>
+</div>`
+	magnets := parseMagnetsFromHTML(t, html)
+	if len(magnets) != 2 {
+		t.Fatalf("len = %d, magnets = %+v", len(magnets), magnets)
+	}
+	if magnets[0].Magnet != "magnet:?xt=urn:btih:aaa111" || magnets[0].Name != "SSNI-678-C.mp4" || magnets[0].Size != "2.1GB" || magnets[0].Date != "2024-05-06" {
+		t.Fatalf("first magnet %+v", magnets[0])
+	}
+	if !magnets[0].IsHD || !magnets[0].HasSubs {
+		t.Fatalf("expected HD+subs on first magnet %+v", magnets[0])
+	}
+	if magnets[1].Magnet != "magnet:?xt=urn:btih:bbb222" || magnets[1].IsHD || magnets[1].HasSubs {
+		t.Fatalf("second magnet %+v", magnets[1])
+	}
+}
+
+func TestParseMagnetLinksClipboardFallback(t *testing.T) {
+	t.Parallel()
+	html := `
+<div id="magnets-content" class="magnet-links">
+  <div class="item">
+    <div class="magnet-name">
+      <span class="name">SSNI-678.mp4</span>
+      <span class="meta">1.2GB</span>
+    </div>
+    <button class="copy-to-clipboard" data-clipboard-text="magnet:?xt=urn:btih:clipme">Copy</button>
+    <div class="date"><span class="time">2024-08-01</span></div>
+  </div>
+  <div class="item">
+    <div class="magnet-name"><span class="name">not-a-magnet</span></div>
+    <button class="copy-to-clipboard" data-clipboard-text="https://example.com/not-magnet">Copy</button>
+  </div>
+</div>`
+	magnets := parseMagnetsFromHTML(t, html)
+	if len(magnets) != 1 {
+		t.Fatalf("len = %d, magnets = %+v", len(magnets), magnets)
+	}
+	if magnets[0].Magnet != "magnet:?xt=urn:btih:clipme" || magnets[0].Name != "SSNI-678.mp4" {
+		t.Fatalf("magnet %+v", magnets[0])
+	}
+}
+
+func TestParseMagnetLinksDedupeAndLegacyMarkup(t *testing.T) {
+	t.Parallel()
+	html := `
+<div class="magnet-links">
+  <div class="item columns is-desktop">
+    <div class="magnet-name">
+      <a href="magnet:?xt=urn:btih:deadbeef">link</a>
+      <span class="name">legacy.mp4</span>
+      <span class="meta">1.2GB</span>
+      <div class="tags"><span class="tag">HD</span><span class="tag">中字</span></div>
+    </div>
+    <button class="copy-to-clipboard" data-clipboard-text="magnet:?xt=urn:btih:deadbeef">Copy</button>
+    <div class="date"><span class="time">2020-02-02</span></div>
+  </div>
+</div>`
+	magnets := parseMagnetsFromHTML(t, html)
+	if len(magnets) != 1 {
+		t.Fatalf("expected 1 unique magnet, got %d: %+v", len(magnets), magnets)
+	}
+	if magnets[0].Magnet != "magnet:?xt=urn:btih:deadbeef" || magnets[0].Name != "legacy.mp4" {
+		t.Fatalf("magnet %+v", magnets[0])
+	}
+	if !magnets[0].IsHD || !magnets[0].HasSubs {
+		t.Fatalf("expected HD+subs %+v", magnets[0])
+	}
+}
+
 func TestLoginRequiredErrorUnwrap(t *testing.T) {
 	t.Parallel()
 	err := &LoginRequiredError{Message: "Unauthorized"}
