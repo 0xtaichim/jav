@@ -111,8 +111,8 @@ func (c *Client) AddWatched(ctx context.Context, code string, rating int, conten
 	postURL := fmt.Sprintf("%s/v/%s/reviews", c.baseURL, videoID)
 	form := url.Values{}
 	form.Set("authenticity_token", csrfToken)
-	form.Set("review[rating]", strconv.Itoa(rating))
-	form.Set("review[content]", content)
+	form.Set("video_review[score]", strconv.Itoa(rating))
+	form.Set("video_review[content]", content)
 	form.Set("video_review[status]", "watched")
 	form.Set("commit", "保存")
 	if err := c.postForm(ctx, postURL, detailURL, csrfToken, form); err != nil {
