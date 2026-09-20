@@ -1,96 +1,135 @@
-# JavCLI Agent Skill Definition
+---
+name: javcli
+description: >-
+  Use javcli to query JavDB: search by 番号/keyword, fetch movie details and magnet
+  links, rankings, reviews, and want-watch/watched/actor bookmarks; also configure
+  cookies, SOCKS5 proxy, and locale. Trigger when the user mentions javcli, JavDB,
+  番号, 磁力, 排行榜, 想看/已看, or adult-video metadata lookup.
+---
 
-此文档定义了 AI Agent 如何使用 `javcli` 工具与 JavDB 数据库进行交互。
+# javcli
 
-## 1. 技能描述 (Description)
+JavDB 非官方 CLI。每条命令的 **stdout 都是 JSON**。解析后用自然语言回答；不要把整段 JSON 或 Cookie 贴进对话。
 
-**名称**: Jav Cli
-**工具**: `javcli`
-**功能**: 允许 Agent 搜索成人影片数据库、获取影片详细元数据（含磁力链接）、查看各类排行榜，以及管理收藏（包括想看，已看，演员）。
-**输出格式**: JSON
+仓库：`https://github.com/0xtaichim/jav`（Go module：`github.com/taichi/javcli`）。人类向说明见 [README.md](README.md)。
 
-## 2. 安装与环境准备 (Installation & Setup)
+## 安装
 
-Agent 在使用前应检查工具是否可用。如果遇到 `command not found: javcli` 错误，请按以下步骤安装。
-
-### 2.1 自动安装 (Auto Install)
-前提：环境中必须安装了 Go (Golang 1.18+)。
-
-```bash
-# 方法 1: 直接通过 Go 安装 (推荐)
-go install github.com/taichi/javcli@latest
-
-# 方法 2: 源码编译 (如果方法 1 失败)
-git clone https://github.com/taichi/javcli.git
-cd javcli
-go mod download
-go build -o javcli
-# 注意：如果使用源码编译，后续命令需使用 ./javcli 或将其移动到 PATH 路径下
-```
-
-### 2.2 验证安装
-安装完成后，运行以下命令验证：
-```bash
-javcli --help
-```
-
-## 3. 核心能力与命令 (Capabilities & Commands)
-
-Agent 应根据用户意图选择以下命令之一执行。所有命令均输出 JSON 数据，Agent 需解析 JSON 并以自然语言回答用户。
-
-### 2.1 搜索影片 (Search)
-用于查找特定番号或基于关键词的影片。
-
-*   **命令**: `javcli search "<关键词或番号>"`
-*   **示例**: `javcli search "SSNI-678"` 或 `javcli search "秘书"`
-*   **返回关键字段**: `movies` (列表), `code`, `title`, `date`, `rating`
-
-### 2.2 获取详情与磁力链 (Get Details)
-用于获取特定番号的详细信息，**特别是磁力链接**和演员表。
-
-*   **命令**: `javcli detail <番号>`
-*   **示例**: `javcli detail SSNI-678`
-*   **返回关键字段**:
-    *   `title`, `code`, `date`, `duration`, `director`, `publisher`
-    *   `actors`: 演员列表
-    *   `magnets`: 磁力链接列表（包含 `magnet` 字符串, `size`, `is_hd` (高清), `has_subs` (字幕)）
-
-### 2.3 查看排行榜 (View Rankings)
-用于发现热门影片。
-
-*   **命令**: `javcli rankings [flags]`
-*   **参数**:
-    *   `--period, -p`: 周期 (`daily`, `weekly`, `monthly`)。默认 `daily`。
-    *   `--type, -t`: 类型 (`censored` [有码], `uncensored` [无码], `western` [欧美], `fc2`)。默认 `censored`。
-*   **示例**:
-    *   有码日榜: `javcli rankings`
-    *   无码周榜: `javcli rankings -p weekly -t uncensored`
-    *   FC2月榜: `javcli rankings -p monthly -t fc2`
-
-## 3. 环境变量要求 (Environment)
-
-确保运行环境已配置以下变量（通常在 Shell 会话中预设）：
+先跑 `javcli --help`。若 `command not found`，需要 Go 1.24+，从源码编译（不要用错误的 `go install github.com/taichi/javcli@latest`，module 路径与 GitHub 仓库不一致）：
 
 ```bash
-# export SOCKS5_PROXY="127.0.0.1:6153"  # 可选, 代理访问
-# export JAVDB_COOKIES=""          # 可选，用于管理收藏，获取无码/FC2数据
+git clone https://github.com/0xtaichim/jav.git
+cd jav
+go build -o javcli .
 ```
 
-## 4. Agent 交互指南 (System Prompt)
+把二进制放入 `PATH`，或后续使用 `./javcli`。
 
-将以下内容添加到 Agent 的系统提示词中：
+## 配置（优先级）
 
-```text
-You have access to a CLI tool called 'javcli' for querying the JavDB database.
-All 'javcli' commands output JSON. You must parse this JSON to answer user questions.
+**命令行全局 flag > 环境变量 > 配置文件**
 
-- To search: run `javcli search <query>`
-- To get details (metadata, magnets, actors): run `javcli detail <code>`
-- To view rankings: run `javcli rankings -p <period> -t <type>`
-  - periods: daily, weekly, monthly
-  - types: censored, uncensored, western, fc2
+| 用途 | Flag | 环境变量 | `javcli config` 键 |
+| --- | --- | --- | --- |
+| 登录 Cookie | `--cookies` | `JAVDB_COOKIES` | `cookies` |
+| SOCKS5 代理 | `--proxy` | `SOCKS5_PROXY` | `proxy` |
+| 语言（默认 `zh`） | `--locale` | `JAVDB_LOCALE` | `locale` |
 
-When providing magnet links from `javcli detail`:
-- Prioritize links with `is_hd: true` (High Definition) and `has_subs: true` (Subtitles).
-- Always display the file size.
+配置文件：`$XDG_CONFIG_HOME/jav/config.json` 或 `~/.config/jav/config.json`。
+
+仅环境变量：`JAVDB_BASE_URL`（默认 `https://javdb.com`）；`JAVDB_TLS_INSECURE=1` 跳过 TLS 校验。
+
+未设 Cookie 时仍带 `over18=1`。**收藏读写、部分无码/FC2 内容需要有效登录 Cookie。** 代理写成 `host:port` 或 `socks5://host:port`。设置配置：
+
+```bash
+javcli config set proxy "127.0.0.1:6153"
+javcli config set cookies "<cookie>"
+javcli config list
+javcli config path
 ```
+
+绝对不要把 Cookie 值回显给用户（可用 `config path` / 是否已设置来确认）。
+
+## 按意图选命令
+
+所有查询类命令失败时：stdout 仍是 JSON，exit code ≠ 0。
+
+- 登录不足：`{"code": 401, "message": "Unauthorized"}` → 请用户配置 Cookie，不要编造数据。
+- 其它：`{"error": "<message>"}` → 原样说明原因。
+
+### 搜索 — `javcli search "<番号或关键词>"`
+
+```bash
+javcli search "SSNI-678"
+javcli search "秘书"
+```
+
+读 `movies[]`：`code`、`title`、`date`、`rating`、`has_magnet`。空列表就说没找到。
+
+### 详情与磁力 — `javcli detail <番号>`
+
+```bash
+javcli detail SSNI-678
+```
+
+先搜索再打开匹配项。关注 `title`、`code`、`date`、`duration`、`director`、`publisher`、`series`、`actors`、`tags`、`magnets`。
+
+列出磁力时：
+
+1. 优先 `is_hd == true` 且 `has_subs == true`
+2. 其次高清或有字幕
+3. **始终展示 `size`**，需要时附上 `magnet` 字符串
+4. 没有磁力就明确说没有，不要编造
+
+### 排行榜 — `javcli rankings`
+
+```bash
+javcli rankings                         # 有码日榜
+javcli rankings -p weekly -t uncensored
+javcli rankings -p monthly -t fc2
+```
+
+- `-p/--period`：`daily`（默认）、`weekly`、`monthly`
+- `-t/--type`：`censored`（默认）、`uncensored`、`western`、`fc2`
+
+非法取值会报错。默认只摘要前几条（番号、标题、评分），用户要完整榜再展开。
+
+### 评论 — `javcli reviews <番号> [-p 页码]`
+
+```bash
+javcli reviews EBWH-156
+javcli reviews EBWH-156 -p 2
+```
+
+用 `has_next` / `next_page` 翻页。字段：`author`、`rating`、`likes`、`content`、`date`。
+
+### 收藏 — `javcli bookmarks`（需登录）
+
+列出：
+
+```bash
+javcli bookmarks                 # want_watch
+javcli bookmarks -t watched -p 2
+javcli bookmarks -t actors
+```
+
+增删（仅影片，不是演员）：
+
+```bash
+javcli bookmarks add -t want_watch <番号>
+javcli bookmarks remove -t want_watch <番号>
+javcli bookmarks add -t watched <番号> [-r 1-5] [-c "评论"]
+javcli bookmarks remove -t watched <番号>
+```
+
+`watched` 的评分缺省或越界按 3 分提交；评论长度约 10–1000。成功：`{"ok": true, "type": "...", "code": "..."}`。删除前番号必须已在对应列表中。
+
+## 工作流
+
+1. 用户给番号或模糊描述 → `search`；要元数据/磁力/演员 → 对命中番号再 `detail`。
+2. 「热门 / 榜单」→ `rankings`，确认周期与类型。
+3. 「评价 / 短评」→ `reviews`，需要更多再翻页。
+4. 「我想看 / 看过 / 我的收藏」→ `bookmarks`；401 则引导配置 Cookie。
+5. 访问失败且环境可能需要代理 → 提示 `--proxy` 或 `SOCKS5_PROXY`，不要反复盲试同一命令。
+6. 不要编造番号、磁力、评分或演员。命令失败就报告错误。
+7. 用户要改配置时用 `config` 子命令，不要手改 JSON（除非用户明确要求）。
