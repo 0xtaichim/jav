@@ -1,52 +1,29 @@
 package javdb
 
 import (
+	"context"
 	"fmt"
-	"net/http"
 	"net/url"
-
-	"github.com/PuerkitoBio/goquery"
+	"strings"
 )
 
 // Search searches by code or keyword.
-func (c *Client) Search(query string) (*SearchResult, error) {
-	searchURL := fmt.Sprintf("%s/search?q=%s", c.baseURL, url.QueryEscape(query))
+func (c *Client) Search(ctx context.Context, query string) (*SearchResult, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
 
-	req, err := http.NewRequest("GET", searchURL, nil)
+	searchURL := c.baseURL + "/search?q=" + url.QueryEscape(query)
+	doc, err := c.getDoc(ctx, searchURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	c.setHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if isLoginRequired(resp) {
-		return nil, &LoginRequiredError{Message: "Unauthorized"}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
+		return nil, err
 	}
 
-	doc, err := parseHTML(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse HTML: %w", err)
-	}
-
-	result := &SearchResult{
+	movies := c.parseMovieList(doc)
+	return &SearchResult{
 		Query:  query,
-		Movies: []Movie{},
-	}
-
-	doc.Find("a.box[href^='/v/']").Each(func(i int, s *goquery.Selection) {
-		movie := c.parseMovieItem(s)
-		result.Movies = append(result.Movies, movie)
-	})
-
-	result.Total = len(result.Movies)
-
-	return result, nil
+		Movies: movies,
+		Total:  len(movies),
+	}, nil
 }
