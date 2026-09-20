@@ -1,41 +1,29 @@
 package cmd
 
 import (
-	"encoding/json"
-	"fmt"
+	"context"
 
 	"github.com/spf13/cobra"
 	"github.com/taichi/javcli/pkg/javdb"
 )
-
-var reviewsPage int
 
 var reviewsCmd = &cobra.Command{
 	Use:   "reviews [code]",
 	Short: "List reviews for a code",
 	Long:  `Get paginated review list for the given code. Output is JSON.`,
 	Args:  cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		code := args[0]
-
-		client := javdb.NewClient()
-		result, err := client.GetReviews(code, reviewsPage)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		page, err := cmd.Flags().GetInt("page")
 		if err != nil {
-			outputErrorJSON(cmd, err)
-			return
+			return err
 		}
-
-		jsonData, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			outputErrorJSON(cmd, err)
-			return
-		}
-
-		fmt.Println(string(jsonData))
+		return withClient(cmd, func(ctx context.Context, c *javdb.Client) (any, error) {
+			return c.GetReviews(ctx, args[0], page)
+		})
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(reviewsCmd)
-	reviewsCmd.Flags().IntVarP(&reviewsPage, "page", "p", 1, "Page number")
+	reviewsCmd.Flags().IntP("page", "p", 1, "Page number")
 }

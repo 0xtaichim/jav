@@ -1,8 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
-	"fmt"
+	"context"
 
 	"github.com/spf13/cobra"
 	"github.com/taichi/javcli/pkg/javdb"
@@ -13,23 +12,10 @@ var searchCmd = &cobra.Command{
 	Short: "Search by code or keyword",
 	Long:  `Search by code or keyword and return JSON.`,
 	Args:  cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		query := args[0]
-
-		client := javdb.NewClient()
-		results, err := client.Search(query)
-		if err != nil {
-			outputErrorJSON(cmd, err)
-			return
-		}
-
-		jsonData, err := json.MarshalIndent(results, "", "  ")
-		if err != nil {
-			outputErrorJSON(cmd, err)
-			return
-		}
-
-		fmt.Println(string(jsonData))
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return withClient(cmd, func(ctx context.Context, c *javdb.Client) (any, error) {
+			return c.Search(ctx, args[0])
+		})
 	},
 }
 

@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/taichi/javcli/pkg/config"
@@ -21,28 +19,22 @@ var configSetCmd = &cobra.Command{
 	Long:  `Set a configuration value. Supported keys: cookies, proxy, locale.`,
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		key := args[0]
-		value := args[1]
-
+		key, value := args[0], args[1]
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
-
 		if err := cfg.Set(key, value); err != nil {
 			return err
 		}
-
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-
-		result := map[string]string{
+		return writeJSON(cmd.OutOrStdout(), map[string]string{
 			"message": fmt.Sprintf("Successfully set %s", key),
 			"key":     key,
 			"value":   value,
-		}
-		return json.NewEncoder(os.Stdout).Encode(result)
+		})
 	},
 }
 
@@ -53,22 +45,18 @@ var configGetCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := args[0]
-
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
-
 		value, err := cfg.Get(key)
 		if err != nil {
 			return err
 		}
-
-		result := map[string]string{
+		return writeJSON(cmd.OutOrStdout(), map[string]string{
 			"key":   key,
 			"value": value,
-		}
-		return json.NewEncoder(os.Stdout).Encode(result)
+		})
 	},
 }
 
@@ -81,8 +69,7 @@ var configListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-
-		return json.NewEncoder(os.Stdout).Encode(cfg.ToMap())
+		return writeJSON(cmd.OutOrStdout(), cfg.ToMap())
 	},
 }
 
@@ -93,26 +80,20 @@ var configUnsetCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := args[0]
-
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
-
-		// Set to empty string to unset
 		if err := cfg.Set(key, ""); err != nil {
 			return err
 		}
-
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-
-		result := map[string]string{
+		return writeJSON(cmd.OutOrStdout(), map[string]string{
 			"message": fmt.Sprintf("Successfully unset %s", key),
 			"key":     key,
-		}
-		return json.NewEncoder(os.Stdout).Encode(result)
+		})
 	},
 }
 
@@ -125,11 +106,7 @@ var configPathCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-
-		result := map[string]string{
-			"path": path,
-		}
-		return json.NewEncoder(os.Stdout).Encode(result)
+		return writeJSON(cmd.OutOrStdout(), map[string]string{"path": path})
 	},
 }
 

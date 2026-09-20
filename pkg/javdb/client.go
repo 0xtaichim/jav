@@ -1,14 +1,11 @@
 package javdb
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/PuerkitoBio/goquery"
 )
 
 const (
@@ -16,50 +13,164 @@ const (
 	userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
+var localeCookieRe = regexp.MustCompile(`(?i)locale=[^;]*`)
+
 // Client is the JavDB API client.
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
-	cookies    string
+	httpClient  *http.Client
+	baseURL     string
+	cookies     string
+	locale      string
+	proxy       string
+	timeout     time.Duration
+	tlsInsecure bool
 }
 
-// injectLocaleIntoCookies ensures the cookie string contains locale from JAVDB_LOCALE.
-// Replaces existing locale=... or appends "; locale=<locale>" if absent.
+// Option configures a Client.
+type Option func(*Client)
+
+// WithHTTPClient injects a custom HTTP client (tests, custom transports).
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) {
+		if hc != nil {
+			c.httpClient = hc
+		}
+	}
+}
+
+// WithBaseURL overrides the JavDB origin. Trailing slashes are stripped.
+func WithBaseURL(u string) Option {
+	return func(c *Client) {
+		if u = strings.TrimRight(strings.TrimSpace(u), "/"); u != "" {
+			c.baseURL = u
+		}
+	}
+}
+
+// WithCookies sets the Cookie header (locale is injected separately).
+func WithCookies(cookies string) Option {
+	return func(c *Client) {
+		c.cookies = cookies
+	}
+}
+
+// WithLocale sets the locale cookie (default zh).
+func WithLocale(locale string) Option {
+	return func(c *Client) {
+		c.locale = locale
+	}
+}
+
+// WithProxy sets a SOCKS5 proxy address (host:port or socks5://host:port).
+func WithProxy(addr string) Option {
+	return func(c *Client) {
+		c.proxy = addr
+	}
+}
+
+// WithTimeout sets the HTTP client timeout. Ignored when WithHTTPClient is used.
+func WithTimeout(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.timeout = d
+		}
+	}
+}
+
+// WithTLSInsecure skips TLS certificate verification when using the built-in transport.
+func WithTLSInsecure(insecure bool) Option {
+	return func(c *Client) {
+		c.tlsInsecure = insecure
+	}
+}
+
+// New creates a JavDB client. Zero options yield a client with default headers,
+// locale "zh", and a Chrome-fingerprint HTTP transport.
+func New(opts ...Option) *Client {
+	c := &Client{
+		baseURL: baseURL,
+		locale:  "zh",
+		timeout: 30 * time.Second,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(c)
+		}
+	}
+	if c.locale == "" {
+		c.locale = "zh"
+	}
+	c.cookies = buildCookies(c.cookies, c.locale)
+	if c.httpClient == nil {
+		c.httpClient = &http.Client{
+			Transport: newTransport(c.proxy, c.tlsInsecure),
+			Timeout:   c.timeout,
+		}
+	}
+	return c
+}
+
+// NewClient creates a client from process environment variables.
+// Prefer New with explicit options when wiring from config or tests.
+func NewClient() *Client {
+	return New(
+		WithCookies(os.Getenv("JAVDB_COOKIES")),
+		WithLocale(os.Getenv("JAVDB_LOCALE")),
+		WithProxy(os.Getenv("SOCKS5_PROXY")),
+		WithBaseURL(os.Getenv("JAVDB_BASE_URL")),
+		WithTLSInsecure(envTruthy(os.Getenv("JAVDB_TLS_INSECURE"))),
+	)
+}
+
+func envTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildCookies(cookies, locale string) string {
+	if locale == "" {
+		locale = "zh"
+	}
+	if strings.TrimSpace(cookies) == "" {
+		return "over18=1; theme=auto; locale=" + locale
+	}
+	return injectLocaleIntoCookies(cookies, locale)
+}
+
 func injectLocaleIntoCookies(cookies, locale string) string {
-	re := regexp.MustCompile(`locale=[^;]*`)
-	if re.MatchString(cookies) {
-		return re.ReplaceAllString(cookies, "locale="+locale)
+	if localeCookieRe.MatchString(cookies) {
+		return localeCookieRe.ReplaceAllString(cookies, "locale="+locale)
 	}
 	return strings.TrimRight(cookies, "; ") + "; locale=" + locale
 }
 
-// NewClient creates a new JavDB client.
-func NewClient() *Client {
-	tr := newTransport()
+func (c *Client) setHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Referer", c.baseURL+"/")
+	req.Header.Set("Cookie", c.cookies)
+	req.Header.Set("Sec-Ch-Ua", `"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"`)
+	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
+	req.Header.Set("Sec-Ch-Ua-Platform", `"macOS"`)
+}
 
-	locale := os.Getenv("JAVDB_LOCALE")
-	if locale == "" {
-		locale = "zh"
-	}
-	cookies := os.Getenv("JAVDB_COOKIES")
-	if cookies == "" {
-		cookies = "over18=1; theme=auto; locale=" + locale
-	} else {
-		cookies = injectLocaleIntoCookies(cookies, locale)
-	}
-
-	return &Client{
-		httpClient: &http.Client{
-			Transport: tr,
-			Timeout:   30 * time.Second,
-		},
-		baseURL: baseURL,
-		cookies: cookies,
+func (c *Client) setAJAXHeaders(req *http.Request, csrfToken, referer string) {
+	c.setHeaders(req)
+	req.Header.Set("Accept", "text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01")
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	if referer != "" {
+		req.Header.Set("Referer", referer)
 	}
 }
 
-// isLoginRequired returns true if the response indicates login is required:
-// 401 Unauthorized, or 200 OK with the login page (JavDB redirects to /users/sign_in).
 func isLoginRequired(resp *http.Response) bool {
 	if resp == nil {
 		return false
@@ -72,99 +183,4 @@ func isLoginRequired(resp *http.Response) bool {
 	}
 	p := resp.Request.URL.Path
 	return strings.Contains(p, "/users/sign_in") || strings.Contains(p, "/login")
-}
-
-// setHeaders sets request headers.
-func (c *Client) setHeaders(req *http.Request) {
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Upgrade-Insecure-Requests", "1")
-	req.Header.Set("Referer", c.baseURL)
-	req.Header.Set("Cookie", c.cookies)
-
-	// Add Sec-Ch-Ua headers to match Chrome 131 fingerprint
-	req.Header.Set("Sec-Ch-Ua", `"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"`)
-	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
-	req.Header.Set("Sec-Ch-Ua-Platform", `"macOS"`)
-}
-
-// setAJAXHeaders sets headers for POST/DELETE AJAX (X-CSRF-Token, X-Requested-With).
-func (c *Client) setAJAXHeaders(req *http.Request, csrfToken string, referer string) {
-	c.setHeaders(req)
-	req.Header.Set("Accept", "text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01")
-	req.Header.Set("X-CSRF-Token", csrfToken)
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
-}
-
-// getVideoIDFromCode resolves code to videoID and detail URL.
-func (c *Client) getVideoIDFromCode(code string) (videoID string, detailURL string, err error) {
-	searchResult, err := c.Search(code)
-	if err != nil {
-		return "", "", fmt.Errorf("search failed: %w", err)
-	}
-	if len(searchResult.Movies) == 0 {
-		return "", "", fmt.Errorf("code not found: %s", code)
-	}
-	var targetURL string
-	for _, movie := range searchResult.Movies {
-		if strings.EqualFold(movie.Code, code) {
-			targetURL = movie.URL
-			break
-		}
-	}
-	if targetURL == "" {
-		targetURL = searchResult.Movies[0].URL
-	}
-	prefix := c.baseURL + "/v/"
-	if !strings.HasPrefix(targetURL, prefix) {
-		return "", "", fmt.Errorf("cannot parse video ID from detail URL: %s", targetURL)
-	}
-	rest := strings.TrimPrefix(targetURL, prefix)
-	if idx := strings.IndexAny(rest, "/?"); idx >= 0 {
-		rest = rest[:idx]
-	}
-	videoID = strings.TrimSpace(rest)
-	if videoID == "" {
-		return "", "", fmt.Errorf("cannot parse video ID from detail URL: %s", targetURL)
-	}
-	return videoID, targetURL, nil
-}
-
-// getCSRFToken fetches csrf-token from page meta.
-func (c *Client) getCSRFToken(pageURL string) (string, error) {
-	req, err := http.NewRequest("GET", pageURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-	c.setHeaders(req)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if isLoginRequired(resp) {
-		return "", &LoginRequiredError{Message: "Unauthorized"}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP status %d", resp.StatusCode)
-	}
-	doc, err := parseHTML(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse HTML: %w", err)
-	}
-	var token string
-	doc.Find("meta[name=\"csrf-token\"]").Each(func(i int, s *goquery.Selection) {
-		if t, ok := s.Attr("content"); ok && t != "" {
-			token = t
-		}
-	})
-	if token == "" {
-		return "", &LoginRequiredError{Message: "Unauthorized"}
-	}
-	return token, nil
 }

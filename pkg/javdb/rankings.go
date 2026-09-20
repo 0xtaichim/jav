@@ -1,50 +1,59 @@
 package javdb
 
 import (
+	"context"
 	"fmt"
-	"net/http"
+	"strings"
+)
 
-	"github.com/PuerkitoBio/goquery"
+var (
+	validRankingPeriods = map[string]struct{}{
+		"daily":   {},
+		"weekly":  {},
+		"monthly": {},
+	}
+	validRankingTypes = map[string]struct{}{
+		"censored":   {},
+		"uncensored": {},
+		"western":    {},
+		"fc2":        {},
+	}
 )
 
 // GetRankings fetches ranking list.
-func (c *Client) GetRankings(period, rankingType string) (*RankingResult, error) {
+func (c *Client) GetRankings(ctx context.Context, period, rankingType string) (*RankingResult, error) {
+	period, rankingType, err := normalizeRanking(period, rankingType)
+	if err != nil {
+		return nil, err
+	}
+
 	rankingURL := fmt.Sprintf("%s/rankings/movies?p=%s&t=%s", c.baseURL, period, rankingType)
-
-	req, err := http.NewRequest("GET", rankingURL, nil)
+	doc, err := c.getDoc(ctx, rankingURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	c.setHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if isLoginRequired(resp) {
-		return nil, &LoginRequiredError{Message: "Unauthorized"}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
+		return nil, err
 	}
 
-	doc, err := parseHTML(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse HTML: %w", err)
-	}
-
-	result := &RankingResult{
+	return &RankingResult{
 		Period: period,
 		Type:   rankingType,
-		Movies: []Movie{},
+		Movies: c.parseMovieList(doc),
+	}, nil
+}
+
+func normalizeRanking(period, rankingType string) (string, string, error) {
+	period = strings.ToLower(strings.TrimSpace(period))
+	rankingType = strings.ToLower(strings.TrimSpace(rankingType))
+	if period == "" {
+		period = "daily"
 	}
-
-	doc.Find("a.box[href^='/v/']").Each(func(i int, s *goquery.Selection) {
-		movie := c.parseMovieItem(s)
-		result.Movies = append(result.Movies, movie)
-	})
-
-	return result, nil
+	if rankingType == "" {
+		rankingType = "censored"
+	}
+	if _, ok := validRankingPeriods[period]; !ok {
+		return "", "", fmt.Errorf("unknown ranking period %q; supported: daily, weekly, monthly", period)
+	}
+	if _, ok := validRankingTypes[rankingType]; !ok {
+		return "", "", fmt.Errorf("unknown ranking type %q; supported: censored, uncensored, western, fc2", rankingType)
+	}
+	return period, rankingType, nil
 }

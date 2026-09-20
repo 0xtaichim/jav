@@ -1,59 +1,22 @@
 package javdb
 
 import (
-	"fmt"
-	"net/http"
-	"strconv"
+	"context"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
 // GetDetail fetches movie detail including magnets.
-func (c *Client) GetDetail(code string) (*MovieDetail, error) {
-	searchResult, err := c.Search(code)
+func (c *Client) GetDetail(ctx context.Context, code string) (*MovieDetail, error) {
+	_, detailURL, err := c.resolveCode(ctx, code)
 	if err != nil {
-		return nil, fmt.Errorf("search failed: %w", err)
+		return nil, err
 	}
 
-	if len(searchResult.Movies) == 0 {
-		return nil, fmt.Errorf("code not found: %s", code)
-	}
-
-	var detailURL string
-	for _, movie := range searchResult.Movies {
-		if strings.EqualFold(movie.Code, code) {
-			detailURL = movie.URL
-			break
-		}
-	}
-
-	if detailURL == "" {
-		detailURL = searchResult.Movies[0].URL
-	}
-
-	req, err := http.NewRequest("GET", detailURL, nil)
+	doc, err := c.getDoc(ctx, detailURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	c.setHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if isLoginRequired(resp) {
-		return nil, &LoginRequiredError{Message: "Unauthorized"}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
-	}
-
-	doc, err := parseHTML(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse HTML: %w", err)
+		return nil, err
 	}
 
 	detail := &MovieDetail{
@@ -62,21 +25,26 @@ func (c *Client) GetDetail(code string) (*MovieDetail, error) {
 		Actors:  []Actor{},
 		Tags:    []string{},
 	}
+	c.parseDetailPanel(doc, detail, code)
+	c.parseMagnetLinks(doc, detail)
+	return detail, nil
+}
 
+func (c *Client) parseDetailPanel(doc *goquery.Document, detail *MovieDetail, fallbackCode string) {
 	firstBlock := doc.Find(".movie-panel-info .panel-block.first-block")
 	if firstBlock.Length() > 0 {
 		codeText := strings.TrimSpace(firstBlock.Find(".value").Text())
 		if codeText != "" {
 			detail.Code = codeText
 		} else {
-			detail.Code = code
+			detail.Code = fallbackCode
 		}
 	} else {
 		codeText := strings.TrimSpace(doc.Find("strong.current-title").Text())
 		if codeText != "" {
 			detail.Code = codeText
 		} else {
-			detail.Code = code
+			detail.Code = fallbackCode
 		}
 	}
 
@@ -90,91 +58,62 @@ func (c *Client) GetDetail(code string) (*MovieDetail, error) {
 		detail.ImageURL = img
 	}
 
-	doc.Find(".movie-panel-info .panel-block").Each(func(i int, s *goquery.Selection) {
-		label := strings.TrimSpace(s.Find("strong").Text())
-		label = strings.TrimSuffix(label, ":")
-
-		if colonIndex := strings.Index(label, ":"); colonIndex != -1 {
-			label = label[:colonIndex]
-		}
-		label = strings.TrimSpace(label)
-
-		switch label {
+	doc.Find(".movie-panel-info .panel-block").Each(func(_ int, s *goquery.Selection) {
+		value := strings.TrimSpace(s.Find(".value").Text())
+		switch panelLabel(s) {
 		case "番號", "番号":
-			codeFromPanel := strings.TrimSpace(s.Find(".value").Text())
-			if codeFromPanel != "" && detail.Code == "" {
-				detail.Code = codeFromPanel
+			if value != "" && detail.Code == "" {
+				detail.Code = value
 			}
 		case "日期":
-			detail.Date = strings.TrimSpace(s.Find(".value").Text())
+			detail.Date = value
 		case "時長", "时长":
-			detail.Duration = strings.TrimSpace(s.Find(".value").Text())
+			detail.Duration = value
 		case "導演", "导演":
-			detail.Director = strings.TrimSpace(s.Find(".value").Text())
+			detail.Director = value
 		case "片商":
-			detail.Publisher = strings.TrimSpace(s.Find(".value").Text())
+			detail.Publisher = value
 		case "發行", "发行":
 			if detail.Publisher == "" {
-				detail.Publisher = strings.TrimSpace(s.Find(".value").Text())
+				detail.Publisher = value
 			}
 		case "系列":
-			detail.Series = strings.TrimSpace(s.Find(".value").Text())
+			detail.Series = value
 		case "評分", "评分":
-			ratingText := strings.TrimSpace(s.Find(".value").Text())
-			if ratingText != "" {
-				parts := strings.Split(ratingText, ",")
-				if len(parts) >= 1 {
-					ratingStr := strings.TrimSuffix(strings.TrimSpace(parts[0]), "分")
-					if rating, err := strconv.ParseFloat(ratingStr, 64); err == nil {
-						detail.Rating = rating
-					}
-				}
-				if len(parts) >= 2 {
-					countStr := strings.TrimSpace(parts[1])
-					countStr = strings.TrimPrefix(countStr, "由")
-					countStr = strings.TrimSuffix(countStr, "人評價")
-					countStr = strings.TrimSpace(countStr)
-					if count, err := strconv.Atoi(countStr); err == nil {
-						detail.RatingCount = count
-					}
-				}
-			}
+			detail.Rating, detail.RatingCount = parseScore(s.Find(".value").Text())
 		case "類別", "类别":
-			s.Find(".value a").Each(func(i int, tag *goquery.Selection) {
+			s.Find(".value a").Each(func(_ int, tag *goquery.Selection) {
 				tagText := strings.TrimSpace(tag.Text())
 				if tagText != "" {
 					detail.Tags = append(detail.Tags, tagText)
 				}
 			})
 		case "演員", "演员":
-			s.Find(".value a").Each(func(i int, actor *goquery.Selection) {
+			s.Find(".value a").Each(func(_ int, actor *goquery.Selection) {
 				actorName := strings.TrimSpace(actor.Text())
+				if actorName == "" {
+					return
+				}
 				actorURL, _ := actor.Attr("href")
-				if actorURL != "" && strings.HasPrefix(actorURL, "/") {
-					actorURL = c.baseURL + actorURL
-				}
-				if actorName != "" {
-					detail.Actors = append(detail.Actors, Actor{
-						Name: actorName,
-						URL:  actorURL,
-					})
-				}
+				detail.Actors = append(detail.Actors, Actor{
+					Name: actorName,
+					URL:  c.absURL(actorURL),
+				})
 			})
 		}
 	})
+}
 
-	doc.Find(".magnet-links .item.columns.is-desktop").Each(func(i int, s *goquery.Selection) {
+func (c *Client) parseMagnetLinks(doc *goquery.Document, detail *MovieDetail) {
+	doc.Find(".magnet-links .item.columns.is-desktop").Each(func(_ int, s *goquery.Selection) {
 		magnet := MagnetLink{}
-
 		magnetNameBlock := s.Find(".magnet-name")
 		if magnetLink, exists := magnetNameBlock.Find("a[href^='magnet:']").Attr("href"); exists {
 			magnet.Magnet = magnetLink
 		}
-
 		magnet.Name = strings.TrimSpace(magnetNameBlock.Find("span.name").Text())
 		magnet.Size = strings.TrimSpace(magnetNameBlock.Find("span.meta").Text())
-
-		magnetNameBlock.Find(".tags .tag").Each(func(i int, tag *goquery.Selection) {
+		magnetNameBlock.Find(".tags .tag").Each(func(_ int, tag *goquery.Selection) {
 			tagText := strings.TrimSpace(tag.Text())
 			if strings.Contains(tagText, "高清") || strings.Contains(tagText, "HD") {
 				magnet.IsHD = true
@@ -183,14 +122,9 @@ func (c *Client) GetDetail(code string) (*MovieDetail, error) {
 				magnet.HasSubs = true
 			}
 		})
-
-		dateText := strings.TrimSpace(s.Find(".date .time").Text())
-		magnet.Date = dateText
-
+		magnet.Date = strings.TrimSpace(s.Find(".date .time").Text())
 		if magnet.Magnet != "" {
 			detail.Magnets = append(detail.Magnets, magnet)
 		}
 	})
-
-	return detail, nil
 }
