@@ -286,7 +286,7 @@ func TestAddWatched(t *testing.T) {
 			_, _ = io.WriteString(w, detailHTML)
 		case r.Method == http.MethodPost && r.URL.Path == "/v/abc123/reviews":
 			_ = r.ParseForm()
-			if r.Form.Get("review[rating]") != "5" || r.Form.Get("video_review[status]") != "watched" {
+			if r.Form.Get("video_review[score]") != "5" || r.Form.Get("video_review[status]") != "watched" {
 				t.Errorf("form %v", r.Form)
 			}
 			posted = true
