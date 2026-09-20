@@ -97,7 +97,7 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&flags.proxy, "proxy", "", "SOCKS5 proxy (host:port)")
+	rootCmd.PersistentFlags().StringVar(&flags.proxy, "proxy", "", "SOCKS5 proxy (host:port or socks5://user:pass@host:port)")
 	rootCmd.PersistentFlags().StringVar(&flags.cookies, "cookies", "", "JavDB session cookies")
 	rootCmd.PersistentFlags().StringVar(&flags.locale, "locale", "", "UI locale (default zh)")
 }

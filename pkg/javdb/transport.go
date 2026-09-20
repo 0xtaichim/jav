@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 )
 
 func newTransport(proxyAddr string, insecure bool) http.RoundTripper {
-	d := &proxyDialer{proxyAddr: normalizeProxyAddr(proxyAddr)}
+	d := newProxyDialer(proxyAddr)
 	return &smartTransport{
 		h2: &http2.Transport{
 			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
@@ -79,24 +80,38 @@ func rewindBody(req *http.Request) error {
 }
 
 type proxyDialer struct {
-	proxyAddr string
+	base  *net.Dialer
+	socks proxy.Dialer
+	err   error
+}
+
+func newProxyDialer(proxyAddr string) *proxyDialer {
+	base := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	d := &proxyDialer{base: base}
+	proxyAddr = strings.TrimSpace(proxyAddr)
+	if proxyAddr == "" {
+		return d
+	}
+	socks, err := newSOCKS5Dialer(proxyAddr, base)
+	if err != nil {
+		d.err = err
+		return d
+	}
+	d.socks = socks
+	return d
 }
 
 func (d *proxyDialer) dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	base := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
-	if d.proxyAddr == "" {
-		return base.DialContext(ctx, network, addr)
+	if d.err != nil {
+		return nil, d.err
 	}
-
-	socks, err := proxy.SOCKS5("tcp", d.proxyAddr, nil, base)
-	if err != nil {
-		return nil, fmt.Errorf("socks5 proxy %s: %w", d.proxyAddr, err)
+	if d.socks == nil {
+		return d.base.DialContext(ctx, network, addr)
 	}
-	if cd, ok := socks.(proxy.ContextDialer); ok {
+	if cd, ok := d.socks.(proxy.ContextDialer); ok {
 		return cd.DialContext(ctx, network, addr)
 	}
-
-	return dialWithContext(ctx, socks, network, addr)
+	return dialWithContext(ctx, d.socks, network, addr)
 }
 
 func dialWithContext(ctx context.Context, d proxy.Dialer, network, addr string) (net.Conn, error) {
@@ -153,10 +168,52 @@ func (d *proxyDialer) dialUTLS(ctx context.Context, network, addr string, alpn [
 	return uConn, nil
 }
 
-func normalizeProxyAddr(addr string) string {
-	addr = strings.TrimSpace(addr)
-	for _, p := range []string{"socks5h://", "socks5://", "socks://"} {
-		addr = strings.TrimPrefix(addr, p)
+func newSOCKS5Dialer(raw string, forward proxy.Dialer) (proxy.Dialer, error) {
+	u, err := parseSOCKS5URL(raw)
+	if err != nil {
+		return nil, err
 	}
-	return addr
+	dialer, err := proxy.FromURL(u, forward)
+	if err != nil {
+		return nil, fmt.Errorf("socks5 proxy %s: %w", u.Host, err)
+	}
+	return dialer, nil
+}
+
+// parseSOCKS5URL accepts host:port, user:pass@host:port, or a socks/socks5/socks5h URL.
+// Username/password auth (RFC 1929) is taken from the URL userinfo.
+func parseSOCKS5URL(raw string) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("socks5 proxy address is empty")
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "socks5://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid socks5 proxy address")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "socks":
+		u.Scheme = "socks5"
+	case "socks5", "socks5h":
+	default:
+		return nil, fmt.Errorf("unsupported proxy scheme %q (only socks5)", u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return nil, fmt.Errorf("socks5 proxy missing host")
+	}
+	if u.User != nil {
+		if u.User.Username() == "" {
+			return nil, fmt.Errorf("socks5 proxy username is empty")
+		}
+		if len(u.User.Username()) > 255 {
+			return nil, fmt.Errorf("socks5 proxy username is too long")
+		}
+		if pass, ok := u.User.Password(); ok && len(pass) > 255 {
+			return nil, fmt.Errorf("socks5 proxy password is too long")
+		}
+	}
+	return u, nil
 }

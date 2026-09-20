@@ -79,13 +79,6 @@ func TestNormalizeRanking(t *testing.T) {
 	}
 }
 
-func TestNormalizeProxyAddr(t *testing.T) {
-	t.Parallel()
-	if got := normalizeProxyAddr("socks5://127.0.0.1:1080"); got != "127.0.0.1:1080" {
-		t.Errorf("got %q", got)
-	}
-}
-
 func TestReviewIDFromHref(t *testing.T) {
 	t.Parallel()
 	if got := reviewIDFromHref("/v/abc/reviews/99"); got != 99 {
